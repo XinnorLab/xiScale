@@ -164,7 +164,26 @@ phase_done(){ if [[ $AUTO_YES -eq 1 ]]; then echo "[auto‑yes] Continuing …";
 check_root(){ [[ $EUID -eq 0 ]] || err "Run as root."; }
 check_prereqs(){ command -v unzip >/dev/null || err "Install unzip"; command -v pdsh >/dev/null || echo -e "\e[33mWill install pdsh in Phase A\e[0m"; [[ -x $SPECTRUMCTL ]] || err "Toolkit not found at $SPECTRUMCTL"; }
 # utilities
-create_nsd_file(){ echo -e "#!/usr/bin/env bash\necho $2" >"$3"; chmod +x "$3"; }
+create_nsd_file(){
+  cat >"$3" <<'EOF'
+#!/bin/ksh
+#
+# This script assigns a GPFS device type of dmm
+# to /dev/sd* devices
+#
+# The output format is:
+#    device_name device_type
+#
+for dev in $( cat /proc/partitions | grep xi_ | awk '{print $4}' )
+do
+    echo $dev generic
+done
+
+# 0 = only script / 1 = script and default
+return 1
+EOF
+  chmod +x "$3"
+}
 add_nsd_safe(){ set +e; $SPECTRUMCTL nsd add -p "$1" "$2" -fg "$3"; [[ $? -ne 0 ]] && echo -e "\e[33mNSD $2 on $1 skipped\e[0m"; set -e; }
 add_node_safe(){ set +e; $SPECTRUMCTL node add $1 -n "$2"; [[ $? -ne 0 ]] && echo -e "\e[33mNode $2 skipped\e[0m"; set -e; }
 
