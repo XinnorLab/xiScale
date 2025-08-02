@@ -8,6 +8,7 @@
 #   • Step‑by‑step confirmations (or -y for unattended)
 #   • -s / --start-phase A‑J to resume from any step
 #   • --hc prints a concise cluster health report and exits
+#   • --perf runs gpfsperf bandwidth tests across all nodes
 #   • Uses absolute path to toolkit in every phase – no cwd dependency
 #   • Generates node‑specific nsddevices files
 #   • Node‑add and NSD‑add are idempotent (skip if already present)
@@ -19,7 +20,7 @@ set -euo pipefail
 ###########################################################################
 # 0. ARGUMENT PARSING & HELP
 ###########################################################################
-AUTO_YES=0; CLUSTER_NAME=""; START_PHASE=""; RUN_HC=0
+AUTO_YES=0; CLUSTER_NAME=""; START_PHASE=""; RUN_HC=0; RUN_PERF=0; FS_NAME=""
 print_help() {
 cat <<'EOF'
 Usage: sudo ./interactive_install_spectrum_scale.sh [options]
@@ -30,6 +31,8 @@ Options:
   -c, --cluster NAME         Explicit GPFS cluster name.
   -s, --start-phase LETTER   Begin execution from phase LETTER (A‑J).
   --hc                       Run health‑check only (mmlscluster … mmlsnsd).
+  --perf                     Run gpfsperf sequential tests on all nodes.
+  --fs NAME                  Filesystem name for --perf (default: prompt).
 
 Phases (A–J):
   A  Local preparation            – Enables CodeReady repo; installs unzip & pdsh.
@@ -57,6 +60,8 @@ while [[ $# -gt 0 ]]; do
     -c|--cluster) shift; CLUSTER_NAME="$1"; shift;;
     -s|--start-phase) shift; START_PHASE="${1^^}"; shift;;
     --hc) RUN_HC=1; shift;;
+    --perf) RUN_PERF=1; shift;;
+    --fs) shift; FS_NAME="$1"; shift;;
     *) echo "Unknown option: $1" >&2; print_help; exit 1;;
   esac
 done
@@ -188,7 +193,24 @@ add_nsd_safe(){ set +e; $SPECTRUMCTL nsd add -p "$1" "$2" -fg "$3"; [[ $? -ne 0 
 add_node_safe(){ set +e; $SPECTRUMCTL node add $1 -n "$2"; [[ $? -ne 0 ]] && echo -e "\e[33mNode $2 skipped\e[0m"; set -e; }
 
 ###########################################################################
-# 4. EXECUTION FLOW
+# 4. GPFS PERFORMANCE TEST MODE
+###########################################################################
+if [[ $RUN_PERF -eq 1 ]]; then
+  [[ -n $FS_NAME ]] || read -rp "Enter GPFS filesystem name: " FS_NAME
+  THREADS=4; SIZE=10g
+  BDIR="/gpfs/${FS_NAME}/gpfsperf"
+  [ -d "$BDIR" ] && { echo "failed to remove $BDIR from previous run" >&2; exit 1; }
+  mkdir -p "$BDIR"
+  remote_all "/usr/lpp/mmfs/samples/perf/gpfsperf create seq $BDIR/\$(hostname) -n $SIZE -r 4m -th $THREADS -fsync" | grep "Data rate"
+  remote_all "/usr/lpp/mmfs/samples/perf/gpfsperf write seq $BDIR/\$(hostname) -r 4m -th 8 -fsync" | grep "Data rate"
+  remote_all "/usr/lpp/mmfs/samples/perf/gpfsperf read seq $BDIR/\$(hostname) -r 4m -th 8" | grep "Data rate"
+  /usr/lpp/mmfs/samples/ilm/mmfind "$BDIR" -type f -xargs rm {} \; > /dev/null 2>&1
+  rmdir "$BDIR"
+  exit 0
+fi
+
+###########################################################################
+# 5. EXECUTION FLOW
 ###########################################################################
 check_root; check_prereqs
 
