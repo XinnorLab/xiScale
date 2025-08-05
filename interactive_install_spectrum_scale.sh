@@ -167,7 +167,14 @@ skip_before() {
 confirm(){ local p=$1; shift; local msg="$*"; if skip_before $p; then echo "[skip] Phase $p"; return 1; fi; echo; echo "$msg"; if [[ $AUTO_YES -eq 1 ]]; then echo "[auto‑yes] Proceeding …"; else read -rp "Continue? [y/N] " ans; [[ $ans =~ ^[Yy]$ ]] || exit 0; fi; START_PHASE=""; return 0; }
 phase_done(){ if [[ $AUTO_YES -eq 1 ]]; then echo "[auto‑yes] Continuing …"; else read -rp "Proceed to the next phase? [y/N] " ans; [[ $ans =~ ^[Yy]$ ]] || exit 0; fi; }
 check_root(){ [[ $EUID -eq 0 ]] || err "Run as root."; }
-check_prereqs(){ command -v unzip >/dev/null || err "Install unzip"; command -v pdsh >/dev/null || echo -e "\e[33mWill install pdsh in Phase A\e[0m"; [[ -x $SPECTRUMCTL ]] || err "Toolkit not found at $SPECTRUMCTL"; }
+# Basic checks that don't depend on the Spectrum Scale toolkit
+check_prereqs(){
+  command -v unzip >/dev/null || err "Install unzip"
+  command -v pdsh  >/dev/null || echo -e "\e[33mWill install pdsh in Phase A\e[0m"
+}
+
+# Verify that the toolkit binary exists when required (phases E and later)
+require_toolkit(){ [[ -x $SPECTRUMCTL ]] || err "Toolkit not found at $SPECTRUMCTL"; }
 # utilities
 create_nsd_file(){
   cat >"$3" <<'EOF'
@@ -242,12 +249,14 @@ fi
 
 # ------------------ PHASE E ---------------------------------------------
 if confirm E "PHASE E: spectrumscale setup with IP ${MGMT_IP}."; then
+  require_toolkit
   setup_cmd="$SPECTRUMCTL setup -s ${MGMT_IP}"; [[ -n $CLUSTER_NAME ]] && setup_cmd+=" -c ${CLUSTER_NAME}"; cmd "$setup_cmd"
   phase_done
 fi
 
 # ------------------ PHASE F ---------------------------------------------
 if confirm F "PHASE F: Add quorum/manager & GUI nodes."; then
+  require_toolkit
   for n in "${QUORUM_NODES[@]}"; do add_node_safe "-a -m -q" "$n"; done
   for n in "${MANAGER_NODES[@]}"; do [[ " ${QUORUM_NODES[*]} " == *" $n "* ]] && continue; add_node_safe "-a -m" "$n"; done
   add_node_safe "-a -m -g" "$GUI_NODE"
@@ -257,12 +266,14 @@ fi
 
 # ------------------ PHASE G ---------------------------------------------
 if confirm G "PHASE G: Define NSDs – idempotent."; then
+  require_toolkit
   for n in "${!NSD_DEV[@]}"; do d=${NSD_DEV[$n]%%:*}; fg=${NSD_DEV[$n]##*:}; add_nsd_safe "$n" "$d" "$fg"; done
   phase_done
 fi
 
 # ------------------ PHASE H ---------------------------------------------
 if confirm H "PHASE H: Disable CallHome & run cluster-wide install."; then
+  require_toolkit
   $SPECTRUMCTL callhome disable
   $SPECTRUMCTL install -pr
   $SPECTRUMCTL install
